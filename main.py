@@ -2,6 +2,7 @@
 from __future__ import print_function
 import os, re, shutil, stat, io
 import git
+from datetime import datetime, timezone
 
 # OAuth
 import httplib2
@@ -14,8 +15,10 @@ from apiclient.http import MediaIoBaseDownload
 # ODF
 import zipfile, xml.dom.minidom
 from odf.opendocument import OpenDocumentText, load
+from odf import text, teletype
 from odf.element import Text
 from odf.text import P
+from odf.style import Style, TextProperties, ParagraphProperties
 
 try:
     import argparse
@@ -60,7 +63,8 @@ def remove_readonly(func, path, _):
     func(path)
 
 def merge(inputfile, textdoc):
-    # TODO replace 
+    
+
     inputtextdoc = load(inputfile)
     # Need to make a copy of the list because addElement unlinks from the original
     for meta in inputtextdoc.meta.childNodes[:]:
@@ -86,16 +90,30 @@ def merge(inputfile, textdoc):
 
     for body in inputtextdoc.body.childNodes[:]:
         textdoc.body.addElement(body)
+    textdoc.Pictures = {**textdoc.Pictures, **inputtextdoc.Pictures}
+    return textdoc
 
-    textdoc.Pictures = inputtextdoc.Pictures
+def replace_tokens(textdoc):
+    repo = git.Repo('.')
+    assert not repo.bare
+    LAST_COMMIT = repo.head.object.hexsha
+    GENERATED_TIME = datetime.now(timezone.utc).strftime("%Y.%m.%d %H:%M")
+
+    texts = textdoc.getElementsByType(text.P)
+    s = len(texts)
+    for i in range(s):
+        tmp_text = teletype.extractText(texts[i])
+        if '%DATETIME%' in tmp_text or '%LAST_GIT_COMMIT%' in tmp_text:
+            tmp_text = tmp_text.replace('%DATETIME%',GENERATED_TIME)
+            tmp_text = tmp_text.replace('%LAST_GIT_COMMIT%', LAST_COMMIT)
+            new_S = text.P()
+            new_S.setAttribute("stylename",texts[i].getAttribute("stylename"))
+            new_S.addText(tmp_text)
+            texts[i].parentNode.insertBefore(new_S,texts[i])
+            texts[i].parentNode.removeChild(texts[i])
     return textdoc
 
 def main():
-    repo = git.Repo('.')
-    assert not repo.bare
-    sha = repo.head.object.hexsha
-    exit(sha)
-
     credentials = get_credentials()
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('drive', 'v3', http=http)
@@ -116,16 +134,34 @@ def main():
             shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
         os.makedirs(TEXTS_DIR)
 
-        book_of_status = OpenDocumentText()
-        for item in items:
+        # Hacky but to prevent step iterator issue when mergning documents
+        doc_stream = get_document(service, items[0]['id'])
+        doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(items[0]['name']))
+        with open(doc_file, 'wb') as out:
+            out.write(doc_stream.getvalue())
+        book_of_status = load(doc_stream)
+
+        # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
+        # withbreak.addElement(ParagraphProperties(breakbefore="page"))
+        # book_of_status.automaticstyles.addElement(withbreak)
+        # page_seperator = P(stylename=withbreak,text=u'')
+
+
+        for item in items[1:]:
             print('{0} ({1})'.format(item['name'], item['id']))
             doc_stream = get_document(service, item['id'])
             doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(item['name']))
-
             with open(doc_file, 'wb') as out:
                 out.write(doc_stream.getvalue())
 
+            # TODO unclear if this is the best approach
+            # book_of_status.text.addElement(page_seperator)
+            book_of_status.text.addElement(text.SoftPageBreak()) 
             book_of_status = merge(doc_stream, book_of_status)
+
+            
+        # Doesn't work well 
+        book_of_status = replace_tokens(book_of_status)
         book_of_status.save("book-of-status.odt")
 
 

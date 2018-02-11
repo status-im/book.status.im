@@ -1,6 +1,7 @@
 # Ignore Credentials
 client_secret_*.json
 credentials.json
+.~lock*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

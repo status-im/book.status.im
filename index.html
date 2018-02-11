@@ -22,17 +22,11 @@
 
             function onEditorCreated(err, e) {
                 editor = e;
-                // editor.openDocumentFromUrl("book-of-status.odt");
-                editor.openDocumentFromUrl("texts/Cover.odt");
+                editor.openDocumentFromUrl("book-of-status.odt");
             }
 
             editorOptions = {
-                modus: Wodo.MODUS_REVIEW,
-                // undoRedoEnabled: false,
-                // userData: {
-                //     fullName: "Otto \"WebODF\" Annotator",
-                //     color:    "blue"
-                // }
+                modus: Wodo.MODUS_REVIEW
             };
 
             Wodo.createTextEditor('container', editorOptions, onEditorCreated);
