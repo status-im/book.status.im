@@ -32,6 +32,7 @@ APPLICATION_NAME = 'Book of Status'
 TEXTS_DIR = './texts'
 DRIVE_ID = '0AEhafKkWf9UkUk9PVA'
 
+
 def get_credentials():
     store = Storage(CREDENTIALS)
     credentials = store.get()
@@ -45,10 +46,13 @@ def get_credentials():
             credentials = tools.run_flow(flow, store, flags)
     return credentials
 
+
 def get_document(service, file_id):
     "Download the Google Doc and return ODF file handle"
-    request = service.files().export_media(fileId=file_id,
-                                                 mimeType='application/vnd.oasis.opendocument.text')
+    request = service.files().export_media(
+        fileId=file_id,
+        mimeType='application/vnd.oasis.opendocument.text'
+    )
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
     done = False
@@ -57,13 +61,14 @@ def get_document(service, file_id):
         print(file_id, "downloading... %d%%." % int(status.progress() * 100))
     return fh
 
+
 def remove_readonly(func, path, _):
     "Clear the readonly bit and reattempt the removal"
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
+
 def merge(inputfile, textdoc):
-    
 
     inputtextdoc = load(inputfile)
     # Need to make a copy of the list because addElement unlinks from the original
@@ -93,6 +98,7 @@ def merge(inputfile, textdoc):
     textdoc.Pictures = {**textdoc.Pictures, **inputtextdoc.Pictures}
     return textdoc
 
+
 def replace_tokens(textdoc):
     repo = git.Repo('.')
     assert not repo.bare
@@ -113,6 +119,7 @@ def replace_tokens(textdoc):
             texts[i].parentNode.removeChild(texts[i])
     return textdoc
 
+
 def main():
     credentials = get_credentials()
     http = credentials.authorize(httplib2.Http())
@@ -120,7 +127,7 @@ def main():
     # TODO Impement pagination
     # TODO Implement recursive directories
     results = service.files().list(
-        q= "mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
+        q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
         includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
         orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)").execute()
     items = results.get('files', [])
@@ -156,11 +163,10 @@ def main():
 
             # TODO unclear if this is the best approach
             # book_of_status.text.addElement(page_seperator)
-            book_of_status.text.addElement(text.SoftPageBreak()) 
+            book_of_status.text.addElement(text.SoftPageBreak())
             book_of_status = merge(doc_stream, book_of_status)
 
-            
-        # Doesn't work well 
+        # Doesn't work well
         book_of_status = replace_tokens(book_of_status)
         book_of_status.save("book-of-status.odt")
 
