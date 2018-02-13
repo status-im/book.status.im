@@ -68,21 +68,46 @@ def remove_readonly(func, path, _):
     func(path)
 
 
-def merge(inputfile, textdoc):
+def print_e(el, indent=0):
+    print(' ' * indent + el.tagName)
+    print(' ' * indent + str(el.attributes))
+    indent += 1
+    for el in el.childNodes[:]:
+        print_e(el, indent)
 
+
+def merge(inputfile, textdoc, document_id):
+    style_renaming = {}
     inputtextdoc = load(inputfile)
+    # print_e(inputtextdoc.automaticstyles)
+    # print('&&&&&&&&&&&')
+    # print_e(inputtextdoc.body)
+    # return
+    # import ipdb; ipdb.set_trace()
+
     # Need to make a copy of the list because addElement unlinks from the original
     for meta in inputtextdoc.meta.childNodes[:]:
         textdoc.meta.addElement(meta)
 
-    for font in inputtextdoc.fontfacedecls.childNodes[:]:
-        textdoc.fontfacedecls.addElement(font)
-
+    def rename_style(style):
+        attr_name = style.getAttribute('name')
+        new_attr_name = "%s_doc%s" % (attr_name, document_id)
+        print(attr_name, new_attr_name)
+        style.setAttribute('name', new_attr_name)
+        style_renaming[attr_name] = new_attr_name
+        return style
+    
     for style in inputtextdoc.styles.childNodes[:]:
         textdoc.styles.addElement(style)
 
     for autostyle in inputtextdoc.automaticstyles.childNodes[:]:
-        textdoc.automaticstyles.addElement(autostyle)
+        textdoc.automaticstyles.addElement(rename_style(autostyle))
+
+    for masterstyles in inputtextdoc.masterstyles.childNodes[:]:
+        textdoc.masterstyles.addElement(masterstyles)
+
+    for font in inputtextdoc.fontfacedecls.childNodes[:]:
+        textdoc.fontfacedecls.addElement(font)
 
     for scripts in inputtextdoc.scripts.childNodes[:]:
         textdoc.scripts.addElement(scripts)
@@ -90,11 +115,33 @@ def merge(inputfile, textdoc):
     for settings in inputtextdoc.settings.childNodes[:]:
         textdoc.settings.addElement(settings)
 
-    for masterstyles in inputtextdoc.masterstyles.childNodes[:]:
-        textdoc.masterstyles.addElement(masterstyles)
+    def replace_style(el):
+
+        if not el.attributes:
+            return el
+        # print(el.attributes)
+        stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name'))
+        if stylename and style_renaming.get(stylename):
+            print('Replacing style-name: %s with %s' % (stylename, style_renaming.get(stylename)))
+            el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name')] = \
+                style_renaming[stylename]
+
+        parent_stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name'))
+        if parent_stylename and style_renaming.get(parent_stylename):
+            print('Replacing parent-style-name: %s with: %s' % (parent_stylename, style_renaming.get(parent_stylename)))
+            el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name')] = \
+                style_renaming[parent_stylename]
+
+        el.childNodes = [
+            replace_style(x) for x in el.childNodes[:]
+        ]
+
+        return el
 
     for body in inputtextdoc.body.childNodes[:]:
+        b = replace_style(body)
         textdoc.body.addElement(body)
+
     textdoc.Pictures = {**textdoc.Pictures, **inputtextdoc.Pictures}
     return textdoc
 
@@ -145,16 +192,18 @@ def main():
         doc_stream = get_document(service, items[0]['id'])
         doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(items[0]['name']))
         with open(doc_file, 'wb') as out:
-            out.write(doc_stream.getvalue())
-        book_of_status = load(doc_stream)
+           out.write(doc_stream.getvalue())
+        book_of_status = OpenDocumentText()
+
+        # book_of_status = load(doc_stream)
 
         # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
         # withbreak.addElement(ParagraphProperties(breakbefore="page"))
         # book_of_status.automaticstyles.addElement(withbreak)
         # page_seperator = P(stylename=withbreak,text=u'')
 
-
-        for item in items[1:]:
+        document_id = 0
+        for item in items[:]:
             print('{0} ({1})'.format(item['name'], item['id']))
             doc_stream = get_document(service, item['id'])
             doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(item['name']))
@@ -164,7 +213,8 @@ def main():
             # TODO unclear if this is the best approach
             # book_of_status.text.addElement(page_seperator)
             book_of_status.text.addElement(text.SoftPageBreak())
-            book_of_status = merge(doc_stream, book_of_status)
+            book_of_status = merge(doc_stream, book_of_status, str(document_id))
+            document_id += 1
 
         # Doesn't work well
         book_of_status = replace_tokens(book_of_status)
