@@ -15,7 +15,7 @@ from apiclient.http import MediaIoBaseDownload
 # ODF
 import zipfile, xml.dom.minidom
 from odf.opendocument import OpenDocumentText, load
-from odf import text, teletype
+from odf import office, text, teletype
 from odf.element import Text
 from odf.text import P
 from odf.style import Style, TextProperties, ParagraphProperties
@@ -27,10 +27,11 @@ except ImportError:
     flags = None
 
 SCOPES = 'https://www.googleapis.com/auth/drive.readonly'
-CREDENTIALS='credentials.json'
+CREDENTIALS = 'credentials.json'
 APPLICATION_NAME = 'Book of Status'
 TEXTS_DIR = './texts'
 DRIVE_ID = '0AEhafKkWf9UkUk9PVA'
+
 
 def get_credentials():
     store = Storage(CREDENTIALS)
@@ -45,10 +46,13 @@ def get_credentials():
             credentials = tools.run_flow(flow, store, flags)
     return credentials
 
+
 def get_document(service, file_id):
     "Download the Google Doc and return ODF file handle"
-    request = service.files().export_media(fileId=file_id,
-                                                 mimeType='application/vnd.oasis.opendocument.text')
+    request = service.files().export_media(
+        fileId=file_id,
+        mimeType='application/vnd.oasis.opendocument.text'
+    )
     fh = io.BytesIO()
     downloader = MediaIoBaseDownload(fh, request)
     done = False
@@ -57,27 +61,77 @@ def get_document(service, file_id):
         print(file_id, "downloading... %d%%." % int(status.progress() * 100))
     return fh
 
+
 def remove_readonly(func, path, _):
     "Clear the readonly bit and reattempt the removal"
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
-def merge(inputfile, textdoc):
-    
 
+def print_e(el, indent=0):
+    print(' ' * indent + el.tagName)
+    print(' ' * indent + str(el.attributes))
+    indent += 1
+    for el in el.childNodes[:]:
+        print_e(el, indent)
+
+
+def rename_style(style, style_renaming, document_id):
+    if style.tagName == 'style:style':
+        # Rename style, and parent style.
+        for style_type in ['name', 'parentstylename']:
+            attr_name = style.getAttribute(style_type)
+            if attr_name:
+                new_attr_name = "%s_doc%s" % (attr_name, document_id)
+                style.setAttribute(style_type, new_attr_name)
+                style_renaming[attr_name] = new_attr_name
+    return style
+
+
+def replace_style(el, style_renaming, document_id):
+
+    if el.attributes:
+
+        stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name'))
+        if stylename and style_renaming.get(stylename):
+            print('Replacing style-name: %s with %s' % (stylename, style_renaming.get(stylename)))
+            el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name')] = \
+                style_renaming[stylename]
+
+        parent_stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name'))
+        if parent_stylename and style_renaming.get(parent_stylename):
+            print('Replacing parent-style-name: %s with: %s' % (parent_stylename, style_renaming.get(parent_stylename)))
+            el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name')] = \
+                style_renaming[parent_stylename]
+
+    el.childNodes = [
+        replace_style(x, style_renaming, document_id) for x in el.childNodes[:]
+    ]
+
+    return el
+
+
+def merge(inputfile, textdoc, document_id):
+    style_renaming = {}
     inputtextdoc = load(inputfile)
+
     # Need to make a copy of the list because addElement unlinks from the original
     for meta in inputtextdoc.meta.childNodes[:]:
         textdoc.meta.addElement(meta)
 
-    for font in inputtextdoc.fontfacedecls.childNodes[:]:
-        textdoc.fontfacedecls.addElement(font)
+    for autostyle in inputtextdoc.automaticstyles.childNodes[:]:
+        s = rename_style(autostyle, style_renaming, document_id)
+        textdoc.automaticstyles.addElement(s)
 
     for style in inputtextdoc.styles.childNodes[:]:
+        s = rename_style(style, style_renaming, document_id)
         textdoc.styles.addElement(style)
 
-    for autostyle in inputtextdoc.automaticstyles.childNodes[:]:
-        textdoc.automaticstyles.addElement(autostyle)
+    for masterstyles in inputtextdoc.masterstyles.childNodes[:]:
+        textdoc.masterstyles.addElement(masterstyles)
+
+    for font in inputtextdoc.fontfacedecls.childNodes[:]:
+        textdoc.fontfacedecls.addElement(font)
 
     for scripts in inputtextdoc.scripts.childNodes[:]:
         textdoc.scripts.addElement(scripts)
@@ -85,13 +139,14 @@ def merge(inputfile, textdoc):
     for settings in inputtextdoc.settings.childNodes[:]:
         textdoc.settings.addElement(settings)
 
-    for masterstyles in inputtextdoc.masterstyles.childNodes[:]:
-        textdoc.masterstyles.addElement(masterstyles)
-
     for body in inputtextdoc.body.childNodes[:]:
-        textdoc.body.addElement(body)
-    textdoc.Pictures = {**textdoc.Pictures, **inputtextdoc.Pictures}
+        b = replace_style(body, style_renaming, document_id)
+        textdoc.body.addElement(b)
+
+    textdoc.Pictures.update(inputtextdoc.Pictures)
+
     return textdoc
+
 
 def replace_tokens(textdoc):
     repo = git.Repo('.')
@@ -104,14 +159,15 @@ def replace_tokens(textdoc):
     for i in range(s):
         tmp_text = teletype.extractText(texts[i])
         if '%DATETIME%' in tmp_text or '%LAST_GIT_COMMIT%' in tmp_text:
-            tmp_text = tmp_text.replace('%DATETIME%',GENERATED_TIME)
+            tmp_text = tmp_text.replace('%DATETIME%', GENERATED_TIME)
             tmp_text = tmp_text.replace('%LAST_GIT_COMMIT%', LAST_COMMIT)
             new_S = text.P()
-            new_S.setAttribute("stylename",texts[i].getAttribute("stylename"))
+            new_S.setAttribute("stylename", texts[i].getAttribute("stylename"))
             new_S.addText(tmp_text)
-            texts[i].parentNode.insertBefore(new_S,texts[i])
+            texts[i].parentNode.insertBefore(new_S, texts[i])
             texts[i].parentNode.removeChild(texts[i])
     return textdoc
+
 
 def main():
     credentials = get_credentials()
@@ -120,7 +176,7 @@ def main():
     # TODO Impement pagination
     # TODO Implement recursive directories
     results = service.files().list(
-        q= "mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
+        q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
         includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
         orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)").execute()
     items = results.get('files', [])
@@ -139,28 +195,24 @@ def main():
         doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(items[0]['name']))
         with open(doc_file, 'wb') as out:
             out.write(doc_stream.getvalue())
-        book_of_status = load(doc_stream)
+        book_of_status = OpenDocumentText()
 
         # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
         # withbreak.addElement(ParagraphProperties(breakbefore="page"))
         # book_of_status.automaticstyles.addElement(withbreak)
-        # page_seperator = P(stylename=withbreak,text=u'')
 
-
-        for item in items[1:]:
+        document_id = 0
+        for item in items[:]:
             print('{0} ({1})'.format(item['name'], item['id']))
             doc_stream = get_document(service, item['id'])
             doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(item['name']))
             with open(doc_file, 'wb') as out:
                 out.write(doc_stream.getvalue())
 
-            # TODO unclear if this is the best approach
-            # book_of_status.text.addElement(page_seperator)
-            book_of_status.text.addElement(text.SoftPageBreak()) 
-            book_of_status = merge(doc_stream, book_of_status)
+            book_of_status = merge(doc_stream, book_of_status, str(document_id))
+            document_id += 1
 
-            
-        # Doesn't work well 
+        # Doesn't work well
         book_of_status = replace_tokens(book_of_status)
         book_of_status.save("book-of-status.odt")
 
