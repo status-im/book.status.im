@@ -198,25 +198,22 @@ def main():
                 shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
             os.makedirs(TEXTS_DIR)
 
-            # doc_stream = get_document(service, files[0]['id'])
-            # doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(files[0]['name']))
-            # with open(doc_file, 'wb') as out:
-            #     out.write(doc_stream.getvalue())
-            guide = OpenDocumentText()
-
-            # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
-            # withbreak.addElement(ParagraphProperties(breakbefore="page"))
-            # guide.automaticstyles.addElement(withbreak)
-
             document_id = 0
             for doc_file in files[:]:
+
                 print('{0} ({1})'.format(doc_file['name'], doc_file['id']))
                 doc_stream = get_document(service, doc_file['id'])
                 doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(doc_file['name']))
                 with open(doc_file, 'wb') as out:
                     out.write(doc_stream.getvalue())
 
-                guide = merge(doc_stream, guide, str(document_id))
+                # OpenDocumentText() can not be trusted to be compatible with
+                #the WebODF viewer rendering, causing 'Step iterator must be on a step' error.
+                # Instead use the first document as our source.
+                if document_id == 0:
+                    guide = load(doc_stream)
+                else:
+                    guide = merge(doc_stream, guide, str(document_id))
                 document_id += 1
 
             guide = replace_tokens(guide)
