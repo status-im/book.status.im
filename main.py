@@ -2,6 +2,7 @@
 from __future__ import print_function
 import os, re, shutil, stat, io
 import git
+import json
 from datetime import datetime, timezone
 
 # OAuth
@@ -174,47 +175,61 @@ def main():
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('drive', 'v3', http=http)
     # TODO Impement pagination
-    # TODO Implement recursive directories
-    results = service.files().list(
-        q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
+    folder_results = service.files().list(
+        q="mimeType = 'application/vnd.google-apps.folder' and '{0}' in parents".format(DRIVE_ID),
         includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
-        orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)").execute()
-    items = results.get('files', [])
-    if not items:
-        print('No files found.')
-    else:
-        print('Files:')
-        if os.path.exists(TEXTS_DIR):
-            # Clear out texts directory so it's easier to see  which documents are changed in git commit
-            # (yes I know storing binaries in git is bad)
-            shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
-        os.makedirs(TEXTS_DIR)
+    ).execute()
+    folders = folder_results.get('files', [])
 
-        # Hacky but to prevent step iterator issue when mergning documents
-        doc_stream = get_document(service, items[0]['id'])
-        doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(items[0]['name']))
-        with open(doc_file, 'wb') as out:
-            out.write(doc_stream.getvalue())
-        book_of_status = OpenDocumentText()
+    guides_index = []
+    for folder in folders:
+        results = service.files().list(
+            q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(folder['id']),
+            includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
+            orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)"
+        ).execute()
+        files = results.get('files', [])
 
-        # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
-        # withbreak.addElement(ParagraphProperties(breakbefore="page"))
-        # book_of_status.automaticstyles.addElement(withbreak)
+        if not files:
+            print('No files found.')
+        else:
+            print('Files:')
+            if os.path.exists(TEXTS_DIR):
+                # Clear out texts directory so it's easier to see  which documents are changed in git commit
+                # (yes I know storing binaries in git is bad)
+                shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
+            os.makedirs(TEXTS_DIR)
 
-        document_id = 0
-        for item in items[:]:
-            print('{0} ({1})'.format(item['name'], item['id']))
-            doc_stream = get_document(service, item['id'])
-            doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(item['name']))
-            with open(doc_file, 'wb') as out:
-                out.write(doc_stream.getvalue())
+            document_id = 0
+            for doc_file in files[:]:
 
-            book_of_status = merge(doc_stream, book_of_status, str(document_id))
-            document_id += 1
+                print('{0} ({1})'.format(doc_file['name'], doc_file['id']))
+                doc_stream = get_document(service, doc_file['id'])
+                doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(doc_file['name']))
+                with open(doc_file, 'wb') as out:
+                    out.write(doc_stream.getvalue())
 
-        # Doesn't work well
-        book_of_status = replace_tokens(book_of_status)
-        book_of_status.save("book-of-status.odt")
+                # OpenDocumentText() can not be trusted to be compatible with
+                # the WebODF viewer rendering, causing 'Step iterator must be on a step' error.
+                # Instead use the first document as our source.
+                if document_id == 0:
+                    guide = load(doc_stream)
+                else:
+                    guide = merge(doc_stream, guide, str(document_id))
+                document_id += 1
+
+            guide = replace_tokens(guide)
+            file_name = "{}.odt".format(folder["name"])
+            guide.save(file_name)
+            guides_index.append({
+                "title": folder["name"],
+                "file_name": file_name
+            })
+
+    with open('index.json', 'w') as outfile:
+        json.dump({
+            'guides': guides_index
+        }, outfile)
 
 
 if __name__ == '__main__':
