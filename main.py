@@ -2,6 +2,7 @@
 from __future__ import print_function
 import os, re, shutil, stat, io
 import git
+import json
 from datetime import datetime, timezone
 
 # OAuth
@@ -180,6 +181,7 @@ def main():
     ).execute()
     folders = folder_results.get('files', [])
 
+    guides_index = []
     for folder in folders:
         results = service.files().list(
             q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(folder['id']),
@@ -208,7 +210,7 @@ def main():
                     out.write(doc_stream.getvalue())
 
                 # OpenDocumentText() can not be trusted to be compatible with
-                #the WebODF viewer rendering, causing 'Step iterator must be on a step' error.
+                # the WebODF viewer rendering, causing 'Step iterator must be on a step' error.
                 # Instead use the first document as our source.
                 if document_id == 0:
                     guide = load(doc_stream)
@@ -217,7 +219,17 @@ def main():
                 document_id += 1
 
             guide = replace_tokens(guide)
-            guide.save("{}.odt".format(folder["name"]))
+            file_name = "{}.odt".format(folder["name"])
+            guide.save(file_name)
+            guides_index.append({
+                "title": folder["name"],
+                "file_name": file_name
+            })
+
+    with open('index.json', 'w') as outfile:
+        json.dump({
+            'guides': guides_index
+        }, outfile)
 
 
 if __name__ == '__main__':

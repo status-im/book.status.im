@@ -1,35 +1,78 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <meta charset="utf-8" /> 
+    <meta charset="utf-8" />
     <title>The Book of Status</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="vendor/webodf.js"></script>
     <script src="vendor/wodotexteditor/wodotexteditor.js"></script>
+    <script src="vendor/jquery-3.3.1.min.js"></script>
     <style>
         html, body, #container {
-            width:100%;  height:100%; 
+            font-family: Helvetica, Arial, sans-serif;
+            width:100%;  height:100%;
             margin:0px;  padding:0px;
+        }
+        ul, li {
+            font-size: 14px;
+            list-style-type: none;
+            list-style:none;
+            padding-left: 1em;
+        }
+        li > a {
+            text-decoration: none !important;
         }
     </style>
   </head>
-  <body onload="init();">
-    <div id="container" style="width:100%; height:100%; margin:0px; padding:0px"></div>
+  <body onload="init();" onhashchange="hashChange();">
+    <div style="width: 10%; height: 100%; position:absolute; padding: 0px" >
+        <ul id="doc_menu_list"></ul>
+    </div>
+    <div id="doc_container" style="width: 90%; height:100%; margin-left: 10%; padding: 0px"></div>
+    </div>
     <script type="text/javascript">
         function init() {
+
+            // Load side-menu
+            $.getJSON( "index.json", function(data) {
+                $.each(data.guides, function(idx, guide) {
+                    var current_location = location.href.replace(location.hash,"");
+                    $("#doc_menu_list").append(
+                        '<li> <a href="#' + guide.file_name + '"> ' + guide.title + '</a></li>'
+                    );
+                });
+            });
+
+            initEditor();
+        }
+        function getDocUrl() {
+            var url = "Book of Status.odt";
+            if (window.location.hash) {
+                url = decodeURIComponent(window.location.hash.slice(1));
+            }
+            return url;
+        }
+        function hashChange() {
+            var e = window.editor;
+            e.closeDocument(function() {
+                e.openDocumentFromUrl(getDocUrl());
+            });
+        }
+        function initEditor() {
             var editor,
                 editorOptions;
 
             function onEditorCreated(err, e) {
                 editor = e;
-                editor.openDocumentFromUrl("book-of-status.odt");
+                window.editor = editor;
+                editor.openDocumentFromUrl(getDocUrl());
             }
 
             editorOptions = {
                 modus: Wodo.MODUS_REVIEW
             };
 
-            Wodo.createTextEditor('container', editorOptions, onEditorCreated);
+            Wodo.createTextEditor('doc_container', editorOptions, onEditorCreated);
         }
     </script>
   </body>
