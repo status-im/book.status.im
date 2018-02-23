@@ -94,13 +94,11 @@ def replace_style(el, style_renaming, document_id):
 
         stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name'))
         if stylename and style_renaming.get(stylename):
-            print('Replacing style-name: %s with %s' % (stylename, style_renaming.get(stylename)))
             el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'style-name')] = \
                 style_renaming[stylename]
 
         parent_stylename = el.attributes.get(('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name'))
         if parent_stylename and style_renaming.get(parent_stylename):
-            print('Replacing parent-style-name: %s with: %s' % (parent_stylename, style_renaming.get(parent_stylename)))
             el.attributes[('urn:oasis:names:tc:opendocument:xmlns:text:1.0', 'parent-style-name')] = \
                 style_renaming[parent_stylename]
 
@@ -174,48 +172,58 @@ def main():
     http = credentials.authorize(httplib2.Http())
     service = discovery.build('drive', 'v3', http=http)
     # TODO Impement pagination
-    # TODO Implement recursive directories
-    results = service.files().list(
-        q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(DRIVE_ID),  # for subdirectories later
+    folder_results = service.files().list(
+        q="mimeType = 'application/vnd.google-apps.folder' and '{0}' in parents".format(DRIVE_ID),
         includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
-        orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)").execute()
-    items = results.get('files', [])
-    if not items:
-        print('No files found.')
-    else:
-        print('Files:')
-        if os.path.exists(TEXTS_DIR):
-            # Clear out texts directory so it's easier to see  which documents are changed in git commit
-            # (yes I know storing binaries in git is bad)
-            shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
+    ).execute()
+    folders = folder_results.get('files', [])
+
+    document_id = 0
+
+    # Clear temp texts directory.
+    if os.path.exists(TEXTS_DIR):
+        shutil.rmtree(TEXTS_DIR, onerror=remove_readonly)
         os.makedirs(TEXTS_DIR)
 
-        # Hacky but to prevent step iterator issue when mergning documents
-        doc_stream = get_document(service, items[0]['id'])
-        doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(items[0]['name']))
-        with open(doc_file, 'wb') as out:
-            out.write(doc_stream.getvalue())
-        book_of_status = OpenDocumentText()
+    book_of_status = None
+    for folder in folders:
+        folder_name = folder['name']
+        results = service.files().list(
+            q="mimeType = 'application/vnd.google-apps.document' and '{0}' in parents".format(folder['id']),
+            includeTeamDriveItems=True, corpora='teamDrive', supportsTeamDrives=True, teamDriveId=DRIVE_ID,
+            orderBy='createdTime', pageSize=25, fields="nextPageToken, files(id, name)"
+        ).execute()
+        files = results.get('files', [])
 
-        # withbreak = Style(name="WithBreak", parentstylename="Standard", family="paragraph")
-        # withbreak.addElement(ParagraphProperties(breakbefore="page"))
-        # book_of_status.automaticstyles.addElement(withbreak)
+        if not files:
+            print('No files found.')
+        else:
+            print('Folder: {}'.format(folder_name))
+            print('Files:')
+            for doc_file in files[:]:
 
-        document_id = 0
-        for item in items[:]:
-            print('{0} ({1})'.format(item['name'], item['id']))
-            doc_stream = get_document(service, item['id'])
-            doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(item['name']))
-            with open(doc_file, 'wb') as out:
-                out.write(doc_stream.getvalue())
+                print('{0} ({1}) [{2}]'.format(doc_file['name'], doc_file['id'], document_id))
+                doc_stream = get_document(service, doc_file['id'])
+                doc_file = os.path.join(TEXTS_DIR, "{0}.odt".format(document_id))
+                with open(doc_file, 'wb') as out:
+                    out.write(doc_stream.getvalue())
 
-            book_of_status = merge(doc_stream, book_of_status, str(document_id))
-            document_id += 1
+                # OpenDocumentText() can not be trusted to be compatible with
+                # the WebODF viewer rendering, causing 'Step iterator must be on a step' error.
+                # Instead use the first document as our source.
+                if document_id == 0:
+                    book_of_status = load(doc_stream)
+                else:
+                    book_of_status = merge(doc_stream, book_of_status, str(document_id))
+                document_id += 1
 
-        # Doesn't work well
+    if book_of_status:
         book_of_status = replace_tokens(book_of_status)
         book_of_status.save("book-of-status.odt")
 
 
 if __name__ == '__main__':
     main()
+
+
+# book_of_status.save("book-of-status.odt")
